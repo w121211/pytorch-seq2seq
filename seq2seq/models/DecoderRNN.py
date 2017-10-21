@@ -93,10 +93,10 @@ class DecoderRNN(BaseRNN):
     def forward_step(self, input_var, hidden, encoder_outputs, function):
         batch_size = input_var.size(0)
         output_size = input_var.size(1)
-        embedded = self.embedding(input_var)
+        embedded = self.embedding(input_var)  # output: (batch, seq_len, embedding_dim)
         embedded = self.input_dropout(embedded)
 
-        output, hidden = self.rnn(embedded, hidden)
+        output, hidden = self.rnn(embedded, hidden)  # output: (batch, seq_len, hidden_size*num_directions), (h_n, c_n)
 
         attn = None
         if self.use_attention:
