@@ -4,6 +4,8 @@ import logging
 
 import torch
 import torch.autograd as autograd
+import torch.nn.functional as F
+from torch.autograd import Variable
 from torch.optim.lr_scheduler import StepLR
 import torchtext
 
@@ -21,7 +23,6 @@ try:
     raw_input  # Python 2
 except NameError:
     raw_input = input  # Python 3
-
 
 # Sample usage:
 #     # training
@@ -118,11 +119,13 @@ else:
                              dropout_p=0, use_attention=False, bidirectional=bidirectional,
                              eos_id=tgt.eos_id, sos_id=tgt.sos_id)
 
-        seq2seq = Seq2seq(encoder, decoder)
+        # seq2seq = Seq2seq(encoder, decoder)
         if torch.cuda.is_available():
-            seq2seq.cuda()
-        for param in seq2seq.parameters():
-            param.data.uniform_(-0.08, 0.08)
+            encoder.cuda()
+            decoder.cuda()
+            # seq2seq.cuda()
+        # for param in seq2seq.parameters():
+        #     param.data.uniform_(-0.08, 0.08)
 
         # Optimizer and learning rate scheduler can be customized by
         # explicitly constructing the objects and pass to the trainer.
@@ -130,10 +133,10 @@ else:
         scheduler = StepLR(optimizer.optimizer, 1)
         optimizer.set_scheduler(scheduler)
 
-    # training policy gradient
-
-
+    # policy gradient training
     batch_size = 1  # reinforce 僅允許1次1個
+    sample_size = 64
+
     device = None if torch.cuda.is_available() else -1
     batch_iterator = torchtext.data.BucketIterator(
         dataset=train, batch_size=opt.batch_size,
@@ -150,44 +153,37 @@ else:
         # print(input_lengths)
         encoder_outputs, encoder_hidden = seq2seq.encoder(input_variables, input_lengths)
 
-        # (2) decode, policy gradient training
-        past_actions = []
+        # (2) decode, sampling, policy gradient training
+        for _ in range(sample_size):  # 一個sample視為一個episode
+            inputs = Variable(torch.LongTensor([tgt.sos_id]),
+                              volatile=True).view(batch_size, 1)
+            if torch.cuda.is_available():
+                inputs = inputs.cuda()
 
-        for _ in range(sample_size):
-            inp = autograd.Variable()
+            actions = []  # 等於actions[]
 
+            hidden = encoder_hidden
             for i in range(max_len):
-                output, hidden = decoder.forward_step(inp, hidden)
-                past_actions = []
+                probs, hidden, attn = decoder.forward_step(inputs, hidden, None, F.log_softmax)
 
+                # decode
+                action = probs.multinomial(1)  # 從vocab probs中隨機選出一個vocab_id
+                actions.append((action, probs[action[0]]))  # (vocab_id, prob_vocab)
+                inp = vocab_id = action
+                if vocab == eos_id:
+                    break
 
+            # 先算整體reward，再計算每個action的reward
+            seq = actions[]
+            reward = discriminator(seq)
+            for action in actions:
+                r = action[] * reward  # log-prob * reward
+                action.reinforce(r)
 
-        inputs = autograd.Variable()
-        samples = decoder.sample()
-        rewards = []
-        for s in samples:
-            reward = discriminator(s)
-
-        # train
-        for sample, reward in zip(samples, rewards):
-            reward = zipped[1]
-
-            past_actions = seq2seq.decoder.past_actions[i]
-            # 對每個sample計算intermediate rewards
-            for action in past_actions:
-                mid_reward = action.prob * reward
-                action.reinforce(mid_reward)
-            autograd.backward(past_actions)
-
-        samples = torch.zeros(opt.sample_size, max_len).type(torch.LongTensor)
-        samples.cuda()
-        for i in range(max_len):
-            decoder_outputs, decoder_hidden, other = seq2seq.decoder.forward_step(
-                inputs=None,  # tgt
-                encoder_hidden=encoder_hidden,
-                encoder_outputs=encoder_outputs)
-            sample = torch.multinomial(torch.exp(decoder_outputs), 1)  # (sample_size, 1)
-            samples[:, i] = sample.data
+            optimizer.zero_grad()
+            autograd.backward(actions)
+            optimizer.step()
+            del actions
 
 
 def main():
