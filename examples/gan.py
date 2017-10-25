@@ -1,4 +1,6 @@
 import os
+import sys
+import inspect
 import argparse
 import logging
 
@@ -8,6 +10,11 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from torch.optim.lr_scheduler import StepLR
 import torchtext
+
+seq2seq_pardir = os.path.realpath(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if seq2seq_pardir not in sys.path:
+    sys.path.insert(0, seq2seq_pardir)
 
 import seq2seq as SEQ2SEQ
 from seq2seq.trainer import SupervisedTrainer
@@ -53,9 +60,9 @@ parser.add_argument('--log-level', dest='log_level',
 
 opt = parser.parse_args()
 
-opt.train_path = '/Users/chi/Work/pytorch-seq2seq/data/train.txt'
-opt.batch_size = 1
-opt.sample_size = 128
+opt.train_path = './data/train.txt'
+# opt.batch_size = 1
+# opt.sample_size = 3
 
 LOG_FORMAT = '%(asctime)s %(name)-12s %(levelname)-8s %(message)s'
 logging.basicConfig(format=LOG_FORMAT, level=getattr(logging, opt.log_level.upper()))
@@ -73,7 +80,7 @@ else:
     # Prepare dataset
     src = SourceField()
     tgt = TargetField()
-    max_len = 30
+    max_len = 60
 
 
     def len_filter(example):
@@ -107,15 +114,17 @@ else:
     if torch.cuda.is_available():
         loss.cuda()
 
-    seq2seq = None
+    # seq2seq = None
     optimizer = None
+    encoder = None
+    decoder = None
     if not opt.resume:
         # Initialize model
         hidden_size = 128
-        bidirectional = True
+        bidirectional = False
         encoder = EncoderRNN(len(src.vocab), max_len, hidden_size,
-                             bidirectional=bidirectional, variable_lengths=True)
-        decoder = DecoderRNN(len(tgt.vocab), max_len, hidden_size * 2 if bidirectional else 1,
+                             bidirectional=bidirectional, variable_lengths=False)
+        decoder = DecoderRNN(len(tgt.vocab), max_len, hidden_size * 2 if bidirectional else hidden_size,
                              dropout_p=0, use_attention=False, bidirectional=bidirectional,
                              eos_id=tgt.eos_id, sos_id=tgt.sos_id)
 
@@ -129,61 +138,70 @@ else:
 
         # Optimizer and learning rate scheduler can be customized by
         # explicitly constructing the objects and pass to the trainer.
-        optimizer = Optimizer(torch.optim.Adam(seq2seq.parameters()), max_grad_norm=5)
-        scheduler = StepLR(optimizer.optimizer, 1)
-        optimizer.set_scheduler(scheduler)
+        # optimizer = Optimizer(torch.optim.Adam(seq2seq.parameters()), max_grad_norm=5)
+        # scheduler = StepLR(optimizer.optimizer, 1)
+        # optimizer.set_scheduler(scheduler)
+        optimizer = torch.optim.Adam(decoder.parameters(), lr=1e-2)
 
     # policy gradient training
     batch_size = 1  # reinforce 僅允許1次1個
-    sample_size = 64
+    batch_size = 1  # reinforce 僅允許1次1個
+    sample_size = 3
 
     device = None if torch.cuda.is_available() else -1
     batch_iterator = torchtext.data.BucketIterator(
-        dataset=train, batch_size=opt.batch_size,
+        dataset=train, batch_size=batch_size,
         sort_key=lambda x: -len(x.src),
         device=device, repeat=False)
     batch_generator = iter(batch_iterator)
 
     for batch in batch_generator:
         # (1) encode
-        print('Input:')
         input_variables, input_lengths = getattr(batch, SEQ2SEQ.src_field_name)
         target_variables = getattr(batch, SEQ2SEQ.tgt_field_name)
-        print(input_variables)
+        # print(input_variables)
         # print(input_lengths)
-        encoder_outputs, encoder_hidden = seq2seq.encoder(input_variables, input_lengths)
+        encoder_outputs, encoder_hidden = encoder(input_variables, input_lengths)
+        # print(encoder_outputs)
 
         # (2) decode, sampling, policy gradient training
         for _ in range(sample_size):  # 一個sample視為一個episode
-            inputs = Variable(torch.LongTensor([tgt.sos_id]),
-                              volatile=True).view(batch_size, 1)
+            inputs = Variable(torch.LongTensor([tgt.sos_id])).view(batch_size, -1)
             if torch.cuda.is_available():
                 inputs = inputs.cuda()
 
-            actions = []  # 等於actions[]
+            actions = []
+            decodes = []
 
+            decoder_input = inputs[:, 0].unsqueeze(1)
             hidden = encoder_hidden
             for i in range(max_len):
-                probs, hidden, attn = decoder.forward_step(inputs, hidden, None, F.log_softmax)
+                probs, hidden, attn = decoder.forward_step(decoder_input, hidden, None, F.log_softmax)
 
                 # decode
-                action = probs.multinomial(1)  # 從vocab probs中隨機選出一個vocab_id
-                actions.append((action, probs[action[0]]))  # (vocab_id, prob_vocab)
-                inp = vocab_id = action
-                if vocab == eos_id:
+                probs = probs.exp().squeeze(0)
+                action = probs.multinomial(1)  # (batch, 1), 從vocab probs中隨機選出一個vocab_id
+                symbol = action.data[0, 0]
+                actions.append(action)
+                decodes.append((symbol, probs.data[0, symbol]))  # (vocab_id, prob_vocab)
+                decoder_input = action
+                if symbol == tgt.eos_id:
                     break
+            # print(actions)
 
             # 先算整體reward，再計算每個action的reward
-            seq = actions[]
-            reward = discriminator(seq)
+            # reward = discriminator(seq)
+            reward = 10
             for action in actions:
-                r = action[] * reward  # log-prob * reward
-                action.reinforce(r)
-
+                # r = action * reward  # log-prob * reward
+                # print(action.grad_fn)
+                action.reinforce(reward)
             optimizer.zero_grad()
-            autograd.backward(actions)
+            autograd.backward(actions, [None for _ in actions], retain_graph=True)
             optimizer.step()
             del actions
+
+            # print([p for p in decoder.parameters()])
 
 
 def main():
