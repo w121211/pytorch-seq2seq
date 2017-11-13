@@ -97,7 +97,7 @@ for param in gen.parameters():
     param.data.uniform_(-0.08, 0.08)
 
 # pre-train generator
-pretrain_generator(gen, pre_train, pre_dev)
+# pretrain_generator(gen, pre_train, pre_dev)
 
 # init discriminator
 dis = ClassifierCNN(len(tgt.vocab), embed_dim=hidden_size,
@@ -110,18 +110,16 @@ if torch.cuda.is_available():
 gen_trainer = reinforce.PolicyGradientTrainer(max_len=max_len)
 gen_optimizer = torch.optim.Adam(gen.parameters(), lr=0.01)
 
-dis_trainer = trainer.BinaryClassifierTrainer()
+dis_trainer = trainer.BinaryClassifierTrainer(print_every=50)
 dis_optimizer = torch.optim.Adam(dis.parameters(), lr=0.01)
 
 # pre-train discriminator
 samples = [sample for sample, _, _, _ in gen_trainer.gen_sample(
-    gen, adv_train_iter, num_src=256, src2sample=1)]
+    gen, adv_train_iter, num_src=20, src2sample=1)]
 batch = next(iter(real_iter))
 reals = batch.tgt.data[:, 1:]  # 裁掉<sos>
-for epoch in range(1, 50+1):
-    logging.info('Epoch[%d]' % epoch)
-    _train_iter = helper.batch_gen(samples, reals, pad_id, max_len, batch_size=16)
-    dis_trainer.train_epoch(dis, _train_iter, dis_optimizer, dev_iter=adv_dev_iter)
+_train_iter = helper.batch_gen(samples, reals, pad_id, max_len, batch_size=16)
+dis_trainer.train(dis, _train_iter, dis_optimizer, dev_iter=adv_dev_iter)
 
 # adversarial training
 logging.info('Start adversarial training')

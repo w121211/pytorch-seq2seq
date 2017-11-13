@@ -14,6 +14,7 @@ from seq2seq.loss import NLLLoss
 from seq2seq.optim import Optimizer
 from seq2seq.util.checkpoint import Checkpoint
 
+
 class SupervisedTrainer(object):
     """ The SupervisedTrainer class helps in setting up a training framework in a
     supervised setting.
@@ -25,6 +26,7 @@ class SupervisedTrainer(object):
         batch_size (int, optional): batch size for experiment, (default: 64)
         checkpoint_every (int, optional): number of epochs to checkpoint after, (default: 100)
     """
+
     def __init__(self, expt_dir='experiment', loss=NLLLoss(), batch_size=64,
                  random_seed=None,
                  checkpoint_every=100, print_every=100):
@@ -99,7 +101,8 @@ class SupervisedTrainer(object):
                 input_variables, input_lengths = getattr(batch, seq2seq.src_field_name)
                 target_variables = getattr(batch, seq2seq.tgt_field_name)
 
-                loss = self._train_batch(input_variables, input_lengths.tolist(), target_variables, model, teacher_forcing_ratio)
+                loss = self._train_batch(input_variables, input_lengths.tolist(), target_variables, model,
+                                         teacher_forcing_ratio)
 
                 # Record average loss
                 print_loss_total += loss
@@ -116,6 +119,7 @@ class SupervisedTrainer(object):
 
                 # Checkpoint
                 if step % self.checkpoint_every == 0 or step == total_steps:
+                    print(data.fields[seq2seq.tgt_field_name].vocab)
                     Checkpoint(model=model,
                                optimizer=self.optimizer,
                                epoch=epoch, step=step,
@@ -164,8 +168,10 @@ class SupervisedTrainer(object):
 
             # A walk around to set optimizing parameters properly
             resume_optim = self.optimizer.optimizer
+            print(resume_optim)
             defaults = resume_optim.param_groups[0]
             defaults.pop('params', None)
+            print(defaults)
             self.optimizer.optimizer = resume_optim.__class__(model.parameters(), **defaults)
 
             start_epoch = resume_checkpoint.epoch

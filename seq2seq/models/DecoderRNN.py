@@ -171,7 +171,7 @@ class DecoderRNN(BaseRNN):
             encoder_hidden = tuple([self._cat_directions(h) for h in encoder_hidden])
         else:
             encoder_hidden = self._cat_directions(encoder_hidden)
-        return encoder_hiddenx
+        return encoder_hidden
 
     def _cat_directions(self, h):
         """ If the encoder is bidirectional, do the following transformation.

@@ -6,6 +6,7 @@ import shutil
 import torch
 import dill
 
+
 class Checkpoint(object):
     """
     The Checkpoint class manages the saving and loading of a model during training. It allows training to be suspended
@@ -71,7 +72,7 @@ class Checkpoint(object):
         torch.save({'epoch': self.epoch,
                     'step': self.step,
                     'optimizer': self.optimizer
-                   },
+                    },
                    os.path.join(path, self.TRAINER_STATE_NAME))
         torch.save(self.model, os.path.join(path, self.MODEL_NAME))
 
@@ -94,11 +95,14 @@ class Checkpoint(object):
         print("Loading checkpoints from {}".format(path))
         resume_checkpoint = torch.load(os.path.join(path, cls.TRAINER_STATE_NAME))
         model = torch.load(os.path.join(path, cls.MODEL_NAME))
-        model.flatten_parameters() # make RNN parameters contiguous
+        model.flatten_parameters()  # make RNN parameters contiguous
         with open(os.path.join(path, cls.INPUT_VOCAB_FILE), 'rb') as fin:
             input_vocab = dill.load(fin)
         with open(os.path.join(path, cls.OUTPUT_VOCAB_FILE), 'rb') as fin:
-            output_vocab = dill.load(fin)
+            try:
+                output_vocab = dill.load(fin)
+            except EOFError:
+                output_vocab = None
         optimizer = resume_checkpoint['optimizer']
         return Checkpoint(model=model, input_vocab=input_vocab,
                           output_vocab=output_vocab,
