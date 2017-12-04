@@ -1,8 +1,8 @@
 import torch
 from torch.autograd import Variable
 
-class Predictor(object):
 
+class Predictor(object):
     def __init__(self, model, src_vocab, tgt_vocab):
         """
         Predictor class to evaluate for a given model.
@@ -19,7 +19,6 @@ class Predictor(object):
         self.model.eval()
         self.src_vocab = src_vocab
         self.tgt_vocab = tgt_vocab
-
 
     def predict(self, src_seq):
         """ Make prediction given `src_seq` as input.

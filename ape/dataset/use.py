@@ -15,33 +15,40 @@ class USE(TranslationDataset):
     def preprocess(cls, to_dir='../../data/use'):
         sent_detector = nltk.data.load('tokenizers/punkt/english.pickle')
         tokenizer = MosesTokenizer()
-
-        train_path = os.path.join(to_dir, 'train.src')
-        test_path = os.path.join(to_dir, 'test.src')
+        store = {'train': [],
+                 'val': [],
+                 'test': [], }
 
         count = 0
-        with open(train_path, 'w+') as train, open(test_path, 'w+') as test:
-            for root, dirs, files in os.walk(cls.path):
-                for file in files:
-                    if not file.endswith('txt'):
-                        continue
+        for root, dirs, files in os.walk(cls.path):
+            for file in files:
+                if not file.endswith('txt'):
+                    continue
 
-                    with open(os.path.join(root, file), 'r', encoding='latin-1') as f:
-                        for line in f:
-                            # 跳過 xml tokens, eg: <doc>, <title>
-                            if line.startswith('<') and line.endswith('>\n'):
-                                continue
+                with open(os.path.join(root, file), 'r', encoding='latin-1') as f:
+                    for line in f:
+                        # 跳過 xml tokens, eg: <doc>, <title>
+                        if line.startswith('<') and line.endswith('>\n'):
+                            continue
 
-                            sents = sent_detector.tokenize(line.strip())
-                            sents = [' '.join(tokenizer.tokenize(sent)) for sent in sents]
+                        sents = sent_detector.tokenize(line.strip())
+                        sents = [' '.join(tokenizer.tokenize(sent)) for sent in sents]
 
-                            if count % 10 == 0:
-                                test.write('\n'.join(sents))
-                            else:
-                                train.write('\n'.join(sents))
-                            if count % 1000 == 0:
-                                print(count)
-                            count += 1
+                        if count % 20 == 0:
+                            store['test'] += sents
+                        elif count % 10 == 0:
+                            store['val'] += sents
+                        else:
+                            store['train'] += sents
+
+                        if count % 1000 == 0:
+                            print(count)
+                        count += 1
+
+        for k, v in store.items():
+            with open(os.path.join(to_dir, '%s.src' % k), 'w+') as f:
+                v = map(lambda x: x + '\n', v)
+                f.writelines(v)
 
     @classmethod
     def splits(cls, exts, fields, path='./data/lang8', root='./data',
@@ -62,4 +69,4 @@ class USE(TranslationDataset):
             path, root, train, validation, test, exts=exts, fields=fields, **kwargs)
 
 
-# USE.preprocess()
+USE.preprocess()

@@ -18,9 +18,9 @@ if seq2seq_pardir not in sys.path:
 
 import seq2seq
 from seq2seq.trainer import trainer
-from seq2seq.trainer import reinforce
+from seq2seq.trainer import gan
 from seq2seq.models import EncoderRNN, DecoderRNN, Seq2seq
-from seq2seq.models.classifierCNN import ClassifierCNN
+from seq2seq.models.cnn import ClassifierCNN
 from seq2seq.dataset import SourceField, TargetField
 from seq2seq.dataset.lang8 import Lang8
 
@@ -127,7 +127,7 @@ if torch.cuda.is_available():
     dis.cuda()
 
 # init trainers
-gen_trainer = reinforce.PolicyGradientTrainer(max_len=max_len)
+gen_trainer = gan.PolicyGradientTrainer(max_len=max_len)
 gen_optimizer = torch.optim.Adam(gen.parameters(), lr=0.01)
 
 dis_trainer = trainer.ClassifierTrainer()

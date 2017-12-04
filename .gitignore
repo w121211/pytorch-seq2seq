@@ -174,7 +174,9 @@ ENV/
 # Rope project settings
 .ropeproject
 
+.vector_cache/
 data/
 src/
 trees/
 experiment/
+trained.chkpt

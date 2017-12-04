@@ -1,31 +1,25 @@
+import logging
 import os
 import sys
-import inspect
-import argparse
-import logging
-import random
 
 import torch
-import torch.autograd as autograd
-import torch.nn.functional as F
-from torch.optim.lr_scheduler import StepLR
 import torchtext
+from torch.optim.lr_scheduler import StepLR
 
 seq2seq_pardir = os.path.realpath(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if seq2seq_pardir not in sys.path:
     sys.path.insert(0, seq2seq_pardir)
 
-import seq2seq
 from seq2seq.trainer import SupervisedTrainer, trainer
-from seq2seq.trainer import reinforce
+from seq2seq.trainer import gan
 from seq2seq.models import EncoderRNN, DecoderRNN, Seq2seq
-from seq2seq.models.classifierCNN import ClassifierCNN
+from seq2seq.models.cnn import ClassifierCNN
 from seq2seq.loss import Perplexity
 from seq2seq.optim import Optimizer
 from seq2seq.dataset import SourceField, TargetField
 from seq2seq.dataset.lang8 import Lang8
-from seq2seq import helper
+from seq2seq.util import helper
 
 LOG_FORMAT = '%(asctime)s %(name)-12s %(levelname)-8s %(message)s'
 logging.basicConfig(format=LOG_FORMAT, level=logging.DEBUG)
@@ -107,7 +101,7 @@ if torch.cuda.is_available():
     dis.cuda()
 
 # init trainers
-gen_trainer = reinforce.PolicyGradientTrainer(max_len=max_len)
+gen_trainer = gan.PolicyGradientTrainer(max_len=max_len)
 gen_optimizer = torch.optim.Adam(gen.parameters(), lr=0.01)
 
 dis_trainer = trainer.BinaryClassifierTrainer(print_every=50)

@@ -16,7 +16,7 @@ seq2seq_pardir = os.path.realpath(
 if seq2seq_pardir not in sys.path:
     sys.path.insert(0, seq2seq_pardir)
 
-from seq2seq.models.classifierCNN import ClassifierCNN
+from seq2seq.models.cnn import ClassifierCNN
 from seq2seq.loss import NLLLoss
 from seq2seq.evaluator import Evaluator
 

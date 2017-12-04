@@ -1,4 +1,5 @@
 import os
+import sys
 import argparse
 import logging
 
@@ -6,10 +7,15 @@ import torch
 from torch.optim.lr_scheduler import StepLR
 import torchtext
 
+seq2seq_pardir = os.path.realpath(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if seq2seq_pardir not in sys.path:
+    sys.path.insert(0, seq2seq_pardir)
+
 import seq2seq
 from seq2seq.trainer import SupervisedTrainer
 from seq2seq.models import EncoderRNN, DecoderRNN, Seq2seq
-from seq2seq.loss import Perplexity
+from seq2seq.loss import NLLLoss, Perplexity
 from seq2seq.optim import Optimizer
 from seq2seq.dataset import SourceField, TargetField
 from seq2seq.evaluator import Predictor
@@ -68,17 +74,19 @@ else:
     def len_filter(example):
         return len(example.src) <= max_len and len(example.tgt) <= max_len
 
-
-    train = torchtext.data.TabularDataset(
-        path=opt.train_path, format='tsv',
-        fields=[('src', src), ('tgt', tgt)],
-        filter_pred=len_filter
-    )
-    dev = torchtext.data.TabularDataset(
-        path=opt.dev_path, format='tsv',
-        fields=[('src', src), ('tgt', tgt)],
-        filter_pred=len_filter
-    )
+    # train = torchtext.data.TabularDataset(
+    #     path=opt.train_path, format='tsv',
+    #     fields=[('src', src), ('tgt', tgt)],
+    #     filter_pred=len_filter
+    # )
+    # dev = torchtext.data.TabularDataset(
+    #     path=opt.dev_path, format='tsv',
+    #     fields=[('src', src), ('tgt', tgt)],
+    #     filter_pred=len_filter
+    # )
+    train, dev, test = torchtext.datasets.Multi30k.splits(exts=('.de', '.en'),
+                                                          fields=[('src', src), ('tgt', tgt)],
+                                                          train='train', root='./data')
     src.build_vocab(train, max_size=50000)
     tgt.build_vocab(train, max_size=50000)
     input_vocab = src.vocab
@@ -93,7 +101,8 @@ else:
     # Prepare loss
     weight = torch.ones(len(tgt.vocab))
     pad = tgt.vocab.stoi[tgt.pad_token]
-    loss = Perplexity(weight, pad)
+    # loss = Perplexity(weight, pad)
+    loss = NLLLoss(size_average=False)
     if torch.cuda.is_available():
         loss.cuda()
 
@@ -101,11 +110,11 @@ else:
     optimizer = None
     if not opt.resume:
         # Initialize model
-        hidden_size = 128
+        hidden_size = 512
         bidirectional = True
-        encoder = EncoderRNN(len(src.vocab), max_len, hidden_size,
+        encoder = EncoderRNN(len(src.vocab), max_len, hidden_size, n_layers=1,
                              bidirectional=bidirectional, variable_lengths=True)
-        decoder = DecoderRNN(len(tgt.vocab), max_len, hidden_size * 2 if bidirectional else 1,
+        decoder = DecoderRNN(len(tgt.vocab), max_len, hidden_size * 2 if bidirectional else 1, n_layers=1,
                              dropout_p=0.2, use_attention=True, bidirectional=bidirectional,
                              eos_id=tgt.eos_id, sos_id=tgt.sos_id)
         seq2seq = Seq2seq(encoder, decoder)
@@ -115,18 +124,21 @@ else:
         for param in seq2seq.parameters():
             param.data.uniform_(-0.08, 0.08)
 
-        # Optimizer and learning rate scheduler can be customized by
-        # explicitly constructing the objects and pass to the trainer.
-        optimizer = Optimizer(torch.optim.Adam(seq2seq.parameters()), max_grad_norm=5)
-        scheduler = StepLR(optimizer.optimizer, 1)
-        optimizer.set_scheduler(scheduler)
+            # Optimizer and learning rate scheduler can be customized by
+            # explicitly constructing the objects and pass to the trainer.
+            #
+            # optimizer = Optimizer(torch.optim.Adam(seq2seq.parameters()), max_grad_norm=5)
+            # scheduler = StepLR(optimizer.optimizer, 1)
+            # optimizer.set_scheduler(scheduler)
 
     # train
     t = SupervisedTrainer(loss=loss, batch_size=32,
-                          checkpoint_every=1,
+                          checkpoint_every=1000,
                           print_every=10, expt_dir=opt.expt_dir)
+
+    optimizer = Optimizer(torch.optim.Adam(seq2seq.parameters()), max_grad_norm=5)
     seq2seq = t.train(seq2seq, train,
-                      num_epochs=6, dev_data=dev,
+                      num_epochs=20, dev_data=dev,
                       optimizer=optimizer,
                       teacher_forcing_ratio=0.5,
                       resume=opt.resume)

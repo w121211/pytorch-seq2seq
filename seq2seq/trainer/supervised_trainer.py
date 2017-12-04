@@ -119,7 +119,6 @@ class SupervisedTrainer(object):
 
                 # Checkpoint
                 if step % self.checkpoint_every == 0 or step == total_steps:
-                    print(data.fields[seq2seq.tgt_field_name].vocab)
                     Checkpoint(model=model,
                                optimizer=self.optimizer,
                                epoch=epoch, step=step,
@@ -168,10 +167,9 @@ class SupervisedTrainer(object):
 
             # A walk around to set optimizing parameters properly
             resume_optim = self.optimizer.optimizer
-            print(resume_optim)
             defaults = resume_optim.param_groups[0]
             defaults.pop('params', None)
-            print(defaults)
+            defaults.pop('initial_lr', None)
             self.optimizer.optimizer = resume_optim.__class__(model.parameters(), **defaults)
 
             start_epoch = resume_checkpoint.epoch

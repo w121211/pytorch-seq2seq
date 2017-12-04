@@ -28,8 +28,8 @@ class ListDataset(data.Dataset):
 
 
 class Lang8(TranslationDataset):
-    # path = '/Users/chi/Work/@data/lang-8/lang-8-20111007-2.0/lang-8-20111007-L1-v2.dat'
-    path = '/home/chi/Documents/ape/data/lang-8/lang-8-20111007-2.0/lang-8-20111007-L1-v2.dat'
+    path = '/Users/chi/Work/@data/lang-8/lang-8-20111007-2.0/lang-8-20111007-L1-v2.dat'
+    # path = '/home/chi/Documents/ape/data/lang-8/lang-8-20111007-2.0/lang-8-20111007-L1-v2.dat'
     dirname = '../../data/lang8'
     name = 'lang8'
 

@@ -1,8 +1,6 @@
-src_field_name = 'src'
-tgt_field_name = 'tgt'
 
-PAD = 0
-UNK = 1
+PAD = 1
+UNK = 0
 BOS = 2
 EOS = 3
 
