@@ -1,21 +1,19 @@
-import os
-import sys
-import random
 import logging
-import time
 import math
-import numpy as np
-from tqdm import tqdm
+import os
+import random
+import time
 
+import numpy as np
 import torch
 import torch.autograd as autograd
 import torch.nn as nn
 import torch.nn.functional as F
 import torchtext
+from tqdm import tqdm
 
-from seq2seq.loss import NLLLoss
 from seq2seq.evaluator import Evaluator
-from seq2seq.evaluator import bleu as BLEU
+from seq2seq.loss import NLLLoss
 from seq2seq.models.transformer import Constants
 from seq2seq.util.checkpoint import Checkpoint
 
@@ -250,7 +248,7 @@ class TransformerTrainer(object):
             hyps += TGT_FIELD.reverse(pred.data)
             reals += TGT_FIELD.reverse(tgt_seq.data)
 
-        bleu = BLEU.moses_multi_bleu(hypotheses=np.array(hyps),
+        bleu = bleu.moses_multi_bleu(hypotheses=np.array(hyps),
                                      references=np.array(reals),
                                      lowercase=True)
 

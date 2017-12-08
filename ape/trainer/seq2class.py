@@ -1,21 +1,4 @@
-from __future__ import division
-import logging
-import os
-import random
-import time
-
-import torch
-import torchtext
-from torch import optim
-
-import seq2seq
-from seq2seq.evaluator import Evaluator
-from seq2seq.loss import NLLLoss
-from seq2seq.optim import Optimizer
-from seq2seq.util.checkpoint import Checkpoint
-
-
-class SupervisedDiscriminatorTrainer(object):
+class DiscriminatorTrainer(object):
     def pretrain_D(self, D, G, train, criterion, optimizer, num_epoch=1,
                    src_field_name=None, tgt_field_name=None):
         src_name = self.src_field_name if src_field_name is None else src_field_name

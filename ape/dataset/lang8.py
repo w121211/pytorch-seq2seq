@@ -4,10 +4,7 @@ import re
 import csv
 from random import shuffle
 
-from tqdm import tqdm
-from nltk.tokenize.moses import MosesTokenizer
-from fuzzywuzzy import fuzz
-import spacy
+# import spacy
 
 from torchtext import data
 from torchtext.datasets.translation import TranslationDataset
@@ -180,6 +177,5 @@ class Lang8(TranslationDataset):
         """
         return super(Lang8, cls).splits(exts=exts, fields=fields, root=root,
                                         train=train, validation=validation, test=test, **kwargs)
-
 
 # Lang8.preprocess()

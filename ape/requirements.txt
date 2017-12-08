@@ -1,0 +1,5 @@
+numpy
+dill
+tqdm
+-e git+https://github.com/pytorch/text.git#egg=torchtext
+spacy

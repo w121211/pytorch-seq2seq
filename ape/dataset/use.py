@@ -1,7 +1,6 @@
 import os
 
-import nltk.data
-from nltk.tokenize.moses import MosesTokenizer
+import spacy
 
 from torchtext.datasets.translation import TranslationDataset
 
@@ -13,8 +12,10 @@ class USE(TranslationDataset):
 
     @classmethod
     def preprocess(cls, to_dir='../../data/use'):
-        sent_detector = nltk.data.load('tokenizers/punkt/english.pickle')
-        tokenizer = MosesTokenizer()
+
+        nlp = spacy.load('en_core_web_lg')
+        # sent_detector = nltk.data.load('tokenizers/punkt/english.pickle')
+        # tokenizer = MosesTokenizer()
         store = {'train': [],
                  'val': [],
                  'test': [], }
@@ -31,8 +32,11 @@ class USE(TranslationDataset):
                         if line.startswith('<') and line.endswith('>\n'):
                             continue
 
-                        sents = sent_detector.tokenize(line.strip())
-                        sents = [' '.join(tokenizer.tokenize(sent)) for sent in sents]
+                        doc = nlp(line)
+                        sents = []
+                        for sent in doc.sents:
+                            sents.append(' '.join([token.text for token in sent]))
+                        # sents = [' '.sent for sent in nlp.sents]
 
                         if count % 20 == 0:
                             store['test'] += sents

@@ -9,17 +9,19 @@ import torch.optim as optim
 from torchtext import data
 from torchtext.vocab import Vectors, GloVe, CharNGram, FastText
 
-seq2seq_pardir = os.path.realpath(
+pardir = os.path.realpath(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-if seq2seq_pardir not in sys.path:
-    sys.path.insert(0, seq2seq_pardir)
+if pardir not in sys.path:
+    sys.path.insert(0, pardir)
 
-from seq2seq.models.transformer.Models import Transformer
-from seq2seq.models.transformer.Optim import ScheduledOptim
-from seq2seq.models.transformer import Constants
-from seq2seq.trainer import trainers
-from seq2seq.dataset.lang8 import Lang8
 from seq2seq.util.checkpoint import Checkpoint
+
+from ape import Constants
+from ape.model.transformer.Models import Transformer
+from ape.model.transformer.Optim import ScheduledOptim
+from ape.trainer.seq2seq import TransformerTrainer
+from ape.dataset.lang8 import Lang8
+from ape.dataset.field import SentencePieceField
 
 LOG_FORMAT = '%(asctime)s %(name)-12s %(levelname)-8s %(message)s'
 logging.basicConfig(filename='exp.transformer.log', format=LOG_FORMAT, level=logging.DEBUG)
@@ -51,12 +53,8 @@ def main():
     parser.add_argument('-embs_share_weight', action='store_true')
     parser.add_argument('-proj_share_weight', action='store_true')
 
-    parser.add_argument('-log', default=None)
-    parser.add_argument('-save_model', default=None)
-    parser.add_argument('-save_mode', type=str, choices=['all', 'best'], default='best')
-
-    parser.add_argument('-no_cuda', action='store_true')
-    parser.add_argument('-resume', action='store_true')
+    parser.add_argument('-exp_dir', type=str, default='./experiment')
+    parser.add_argument('-load_from', type=str, default=None)
 
     parser.add_argument('-beam_size', type=int, default=5,
                         help='Beam size')
@@ -65,10 +63,16 @@ def main():
                             decoded sentences""")
 
     opt = parser.parse_args()
-    opt.cuda = not opt.no_cuda
+    opt.cuda = torch.cuda.is_available()
     opt.d_word_vec = opt.d_model
 
+    logging.info('Use CUDA? ' + str(opt.cuda))
+
     # 快速變更設定
+    opt.exp_dir = './experiment/transformer/lang8-cor2err'
+    opt.load_vocab_from = './experiment/transformer/lang8-cor2err/vocab.pt'
+    opt.build_vocab_from = './data/billion/billion.30m.model.vocab'
+
     opt.batch_size = 64
     opt.cuda = torch.cuda.is_available()
     opt.epoch = 10
@@ -77,7 +81,7 @@ def main():
     opt.d_model = 300
     opt.d_inner_hid = 600
 
-    opt.n_head = 5
+    opt.n_head = 6
     opt.n_layers = 3
 
     opt.embs_share_weight = True
@@ -89,29 +93,37 @@ def main():
 
     opt.device = None if torch.cuda.is_available() else -1
 
+    logging.info(opt)
+
     # ---------- prepare dataset ----------
 
     def len_filter(example):
         return len(example.src) <= opt.max_len and len(example.tgt) <= opt.max_len
 
-    EN = data.ReversibleField(init_token=Constants.BOS_WORD,
-                              eos_token=Constants.EOS_WORD,
-                              batch_first=True)
+    EN = SentencePieceField(init_token=Constants.BOS_WORD,
+                            eos_token=Constants.EOS_WORD,
+                            batch_first=True)
     train, val = Lang8.splits(
-        exts=('.err.bpe', '.cor.bpe'), fields=[('src', EN), ('tgt', EN)],
+        exts=('.cor.sp', '.err.sp'), fields=[('src', EN), ('tgt', EN)],
         train='train', validation='val', test=None, filter_pred=len_filter)
-    EN.build_vocab(train, vectors=[GloVe(name='840B', dim='300'), CharNGram(), FastText()])
-    logging.info('vocab len: %d' % len(EN.vocab))
+
+    # 讀取 vocabulary（確保一致）
+    try:
+        logging.info('Load voab from %s' % opt.load_vocab_from)
+        EN.load_vocab(opt.load_vocab_from)
+    except FileNotFoundError:
+        EN.build_vocab_from(opt.build_vocab_from)
+        EN.save_vocab(opt.load_vocab_from)
+
+    logging.info('Vocab len: %d' % len(EN.vocab))
 
     # 檢查Constants是否有誤
-    assert EN.vocab.stoi[EN.init_token] == Constants.BOS
-    assert EN.vocab.stoi[EN.eos_token] == Constants.EOS
-    assert EN.vocab.stoi[EN.pad_token] == Constants.PAD
-    assert EN.vocab.stoi[EN.unk_token] == Constants.UNK
+    assert EN.vocab.stoi[Constants.BOS_WORD] == Constants.BOS
+    assert EN.vocab.stoi[Constants.EOS_WORD] == Constants.EOS
+    assert EN.vocab.stoi[Constants.PAD_WORD] == Constants.PAD
+    assert EN.vocab.stoi[Constants.UNK_WORD] == Constants.UNK
 
     # ---------- init model ----------
-
-    logging.info(opt)
 
     transformer = Transformer(
         len(EN.vocab),
@@ -146,13 +158,13 @@ def main():
 
     crit = get_criterion(len(EN.vocab))
 
-    if torch.cuda.is_available():
+    if opt.cuda:
         transformer.cuda()
         crit.cuda()
 
     # ---------- training ----------
 
-    trainer = trainers.TransformerTrainer()
+    trainer = TransformerTrainer()
 
     for epoch in range(opt.epoch):
         logging.info('[Epoch %d]' % epoch)
@@ -161,11 +173,11 @@ def main():
             (train, val), batch_sizes=(opt.batch_size, opt.batch_size), device=opt.device,
             sort_key=lambda x: len(x.src), repeat=False)
 
-        trainer.train_epoch(transformer, train_iter, crit, optimizer, opt)
+        trainer.train(transformer, train_iter, crit, optimizer, opt)
         trainer.evaluate(transformer, val_iter, crit, EN)
 
         Checkpoint(model=transformer, optimizer=optimizer, epoch=epoch, step=0,
-                   input_vocab=EN.vocab, output_vocab=EN.vocab).save('./experiment/transformer')
+                   input_vocab=None, output_vocab=None).save(opt.exp_dir)
 
 
 if __name__ == '__main__':

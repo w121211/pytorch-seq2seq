@@ -1,22 +1,21 @@
 from __future__ import division
-import time
-import logging
-import numpy as np
-from tqdm import tqdm
 
+import logging
+
+import numpy as np
 import torch
 # import torch.nn as nn
 import torch.autograd as autograd
 import torch.nn as nn
-import torch.nn.functional as F
 import torchtext
+from tqdm import tqdm
 
 import seq2seq
+from ape.evaluator import bleu
 from seq2seq.models.gan import ReinforceGenerator
-from seq2seq.evaluator import bleu
+from seq2seq.models.transformer import Constants
 from seq2seq.util import helper
 from seq2seq.util.checkpoint import Checkpoint
-from seq2seq.models.transformer import Constants
 from .supervised_trainer import SupervisedTrainer
 
 
