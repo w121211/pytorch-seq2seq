@@ -2,10 +2,12 @@ import logging
 import os
 import sys
 import argparse
+from tqdm import tqdm
 
 import torch
 import torch.optim as optim
 import torch.nn as nn
+import torch.autograd as autograd
 from torchtext import data
 from torchtext import datasets
 
@@ -16,7 +18,7 @@ if pardir not in sys.path:
 
 from seq2seq.util.checkpoint import Checkpoint
 
-from ape import Constants, options
+from ape import Constants, options, helper
 from ape.dataset.lang8 import Lang8
 from ape.dataset.field import SentencePieceField
 from ape.model.discriminator import BinaryClassifierCNN
@@ -53,7 +55,7 @@ def build_D(opt, TEXT_FIELD):
                                dropout_p=opt.dropout_p)
 
 
-def load_G(exp_path):
+def load_model(exp_path):
     cp = Checkpoint.load(Checkpoint.get_latest_checkpoint(exp_path))
     model = cp.model
     return model
@@ -68,17 +70,26 @@ def main():
     opt.device = None if opt.cuda else -1
 
     # 快速變更設定
-    opt.exp_dir = './experiment/transformer-dualgan/use_billion'
+    opt.exp_dir = './experiment/transformer-reinforce/use_billion'
     opt.load_vocab_from = './experiment/transformer/lang8-cor2err/vocab.pt'
     opt.build_vocab_from = './data/billion/billion.30m.model.vocab'
 
+    opt.load_D_from = opt.exp_dir
+
     # dataset params
-    opt.max_len = 50
+    opt.max_len = 20
 
     # G params
-    opt.load_G_a_from = './experiment/transformer/lang8-err2cor/'
-    opt.load_G_b_from = './experiment/transformer/lang8-cor2err/'
-    opt.d_model = 300  # 暫時需要
+    # opt.load_G_a_from = './experiment/transformer/lang8-err2cor/'
+    # opt.load_G_b_from = './experiment/transformer/lang8-cor2err/'
+    opt.d_word_vec = 300
+    opt.d_model = 300
+    opt.d_inner_hid = 600
+    opt.n_head = 6
+    opt.n_layers = 3
+    opt.embs_share_weight = True
+    opt.beam_size = 1
+    opt.max_token_seq_len = opt.max_len + 2  # 包含<BOS>, <EOS>
 
     # D params
     opt.embed_dim = opt.d_model
@@ -108,10 +119,10 @@ def main():
                             eos_token=Constants.EOS_WORD,
                             batch_first=True)
 
-    # train = datasets.TranslationDataset(
-    #     path='./data/dualgan/train',
-    #     exts=('.billion.sp', '.use.sp'), fields=[('src', EN), ('tgt', EN)],
-    #     filter_pred=len_filter)
+    train = datasets.TranslationDataset(
+        path='./data/dualgan/train',
+        exts=('.billion.sp', '.use.sp'), fields=[('src', EN), ('tgt', EN)],
+        filter_pred=len_filter)
     # 用於 evaluate G_a
     train_lang8, val_lang8 = Lang8.splits(
         exts=('.err.tiny.sp', '.cor.tiny.sp'), fields=[('src', EN), ('tgt', EN)],
@@ -135,17 +146,17 @@ def main():
 
     # ---------- init model ----------
 
-    G_a = load_G(opt.load_G_a_from)
-    G_b = load_G(opt.load_G_b_from)
-    D_a = build_D(opt, EN)
-    D_b = build_D(opt, EN)
+    G = build_G(opt, EN, EN)
 
-    optim_G_a = optim.Adam(G_a.get_trainable_parameters(),
-                           betas=(0.9, 0.98), eps=1e-09)
-    optim_G_b = optim.Adam(G_a.get_trainable_parameters(),
-                           betas=(0.9, 0.98), eps=1e-09)
-    optim_D_a = torch.optim.Adam(D_a.parameters(), lr=1e-4)
-    optim_D_b = torch.optim.Adam(D_b.parameters(), lr=1e-4)
+    # 預先訓練D
+    if opt.load_D_from:
+        D = load_model(opt.load_D_from)
+    else:
+        D = build_D(opt, EN)
+
+    optim_D = torch.optim.Adam(D.parameters(), lr=1e-4)
+    optim_G = optim.Adam(G.get_trainable_parameters(),
+                         betas=(0.9, 0.98), eps=1e-09)
 
     def get_criterion(vocab_size):
         ''' With PAD token zero weight '''
@@ -157,20 +168,37 @@ def main():
     crit_D = nn.BCELoss()
 
     if opt.cuda:
-        G_a.cuda()
-        G_b.cuda()
-        D_a.cuda()
-        D_b.cuda()
+        G.cuda()
+        D.cuda()
         crit_G.cuda()
         crit_D.cuda()
 
     # ---------- train ----------
 
     trainer_G = trainers.TransformerTrainer()
-    trainer = trainers.DualGanPGTrainer(
-        opt,
-        trainer_G=trainer_G,
-        trainer_D=trainers.DiscriminatorTrainer())
+    trainer_D = trainers.DiscriminatorTrainer()
+
+    if not opt.load_D_from:
+        for epoch in range(1):
+            logging.info('[Pretrain Epoch %d]' % epoch)
+            pool = helper.DiscriminatorDataPool(opt.max_len, D.min_len, Constants.PAD)
+
+            # 將資料塞進pool中
+            train_iter = data.BucketIterator(
+                dataset=train, batch_size=opt.batch_size, device=opt.device,
+                sort_key=lambda x: len(x.src), repeat=False)
+
+            for step, batch in enumerate(tqdm(train_iter)):
+                real_a = batch.src
+                real_b = batch.tgt
+                pool.append_fake(real_a)  # 假設a為假，prob=0
+                pool.append_real(real_b)  # 假設b為真，prob=1
+
+            trainer_D.train(D, train_iter=pool.batch_gen(),
+                            crit=crit_D, optimizer=optim_D)
+            pool.reset()
+        Checkpoint(model=D, optimizer=optim_D, epoch=0, step=0,
+                   input_vocab=EN.vocab, output_vocab=EN.vocab).save(opt.exp_dir)
 
     def eval_G(model):
         _, val_iter = data.BucketIterator.splits(
@@ -178,42 +206,48 @@ def main():
             sort_key=lambda x: len(x.src), repeat=False)
         trainer_G.evaluate(model, val_iter, crit_G, EN)
 
-    train_iter = data.BucketIterator(
-        dataset=train_lang8, batch_size=opt.batch_size, device=opt.device,
-        sort_key=lambda x: len(x.src), repeat=False)
-    batch = next(iter(train_iter))
-    # src_seq = batch.src
-    # tgt_seq = batch.tgt
+    # 正式訓練G
+    for epoch in range(10):
+        logging.info('[Epoch %d]' % epoch)
 
-    seqs, *_ = trainer.train_G_PG(G_a, D_b, optim_G_a, batch.src)
-    print(seqs)
-    # trainer.train(
-    #     0,
-    #     train_iter,
-    #     G_a=G_a,
-    #     G_b=G_b,
-    #     D_a=D_a,
-    #     D_b=D_b,
-    #     optim_G_a=optim_G_a,
-    #     optim_G_b=optim_G_b,
-    #     optim_D_a=optim_D_a,
-    #     optim_D_b=optim_D_b,
-    #     crit_G=crit_G,
-    #     crit_D=crit_D,
-    #     eval_G=eval_G, )
+        train_iter = data.BucketIterator(
+            dataset=train, batch_size=opt.batch_size, device=opt.device,
+            sort_key=lambda x: len(x.src), repeat=False)
 
-    # for epoch in range(opt.n_epoch):
-    #     logging.info('[Epoch %d]' % epoch)
-    #
-    #     train_iter, val_iter = data.BucketIterator.splits(
-    #         (train, val), batch_sizes=(opt.batch_size, opt.batch_size), device=opt.device,
-    #         sort_key=lambda x: len(x.src), repeat=False)
-    #
-    #     trainer.train(transformer, train_iter, crit, optimizer, opt)
-    #     # trainer.evaluate(transformer, val_iter, crit, EN)
-    #
-    #     Checkpoint(model=transformer, optimizer=optimizer, epoch=epoch, step=0,
-    #                input_vocab=EN.vocab, output_vocab=EN.vocab).save('./experiment/transformer')
+        for step, batch in enumerate(tqdm(train_iter)):
+            real_a = batch.src
+            gold = real_a[:, 1:]
+
+            optim_G.zero_grad()
+            logit = G(real_a, real_a)
+            pred = logit.view(-1, logit.size(2))  # (batch*len, n_vocab)
+            loss_rest = crit_G(pred, gold.contiguous().view(-1))
+
+            loss_pg = PGloss(G, D, real_a)
+            loss = 0.9 * loss_rest + 0.1 * loss_pg
+
+            loss.backward()
+            optim_G.step()
+
+            pred = pred.max(1)[1]
+            # gold = gold.contiguous().view(-1)
+            # n_correct = pred.data.eq(gold.data)
+            # n_correct = n_correct.masked_select(gold.ne(Constants.PAD).data).sum()
+
+            if step % 100 == 0:
+                print('ppl: %d' % loss)
+                print('%s -> %s' % (EN.reverse(gold.data)[0], EN.reverse(pred.data)[0]))
+
+
+def bsgan_loss(G, D, src_seq):
+    fake = G.translate(src_seq)
+    D_fake = D(fake)
+    loss = 0.5 * torch.mean((log(D_fake) - log(1 - D_fake)) ** 2)
+    return loss
+
+
+def log(x):
+    return torch.log(x + 1e-8)
 
 
 if __name__ == '__main__':

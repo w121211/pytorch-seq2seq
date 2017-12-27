@@ -5,9 +5,10 @@
     https://github.com/OpenNMT/OpenNMT-py/blob/master/onmt/Beam.py
 """
 
-import torch
 import numpy as np
-from . import Constants
+import torch
+
+from ape import Constants
 
 
 class Beam(object):

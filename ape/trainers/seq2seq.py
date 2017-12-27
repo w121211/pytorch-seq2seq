@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 from seq2seq.util.checkpoint import Checkpoint
 
-from ape import Constants
+from ape import Constants, helper
 from ape.evaluator import bleu as BLEU
 
 
@@ -72,22 +72,26 @@ class TransformerTrainer(object):
             total_loss += loss.data[0]
 
             pred = logit.max(2)[1]
+            pred = helper.pad_bos(pred.data, Constants.BOS)
 
-            hyps += TGT_FIELD.reverse(pred.data)
+            hyps += TGT_FIELD.reverse(pred)
             reals += TGT_FIELD.reverse(tgt_seq.data)
 
-        bleu = BLEU.moses_multi_bleu(hypotheses=np.array(hyps),
-                                     references=np.array(reals),
-                                     lowercase=True)
+        # bleu = BLEU.moses_multi_bleu(hypotheses=np.array(hyps),
+        #                              references=np.array(reals),
+        #                              lowercase=True)
+        bleu = -float('Inf')
 
+        self.logger.info('\n')
         for real, hyp in zip(reals[0:10], hyps[0:10]):
             self.logger.info('(%s) || (%s)' % (real, hyp))
 
-        valid_loss = total_loss / n_total_words
-        valid_accu = n_total_correct / n_total_words
+        avg_loss = total_loss / n_total_words
+        avg_accu = n_total_correct / n_total_words
 
+        self.logger.info('\n')
         self.logger.info('(Validation) ppl: %8.5f, accuracy: %3.3f%%, BLEU %2.2f' % (
-            math.exp(min(valid_loss, 100)), 100 * valid_accu, bleu))
+            math.exp(min(avg_loss, 100)), 100 * avg_accu, bleu))
 
     def batch_loss_backward(self, criterion, hyp, gold, step=4):
         # flatten variables

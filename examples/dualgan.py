@@ -73,7 +73,7 @@ def main():
     opt.build_vocab_from = './data/billion/billion.30m.model.vocab'
 
     # dataset params
-    opt.max_len = 50
+    opt.max_len = 20
 
     # G params
     opt.load_G_a_from = './experiment/transformer/lang8-err2cor/'
@@ -108,10 +108,10 @@ def main():
                             eos_token=Constants.EOS_WORD,
                             batch_first=True)
 
-    # train = datasets.TranslationDataset(
-    #     path='./data/dualgan/train',
-    #     exts=('.billion.sp', '.use.sp'), fields=[('src', EN), ('tgt', EN)],
-    #     filter_pred=len_filter)
+    train = datasets.TranslationDataset(
+        path='./data/dualgan/train',
+        exts=('.billion.sp', '.use.sp'), fields=[('src', EN), ('tgt', EN)],
+        filter_pred=len_filter)
     # 用於 evaluate G_a
     train_lang8, val_lang8 = Lang8.splits(
         exts=('.err.tiny.sp', '.cor.tiny.sp'), fields=[('src', EN), ('tgt', EN)],
@@ -178,42 +178,45 @@ def main():
             sort_key=lambda x: len(x.src), repeat=False)
         trainer_G.evaluate(model, val_iter, crit_G, EN)
 
-    train_iter = data.BucketIterator(
-        dataset=train_lang8, batch_size=opt.batch_size, device=opt.device,
-        sort_key=lambda x: len(x.src), repeat=False)
-    batch = next(iter(train_iter))
-    # src_seq = batch.src
-    # tgt_seq = batch.tgt
+    for epoch in range(10):
+        logging.info('[Epoch %d]' % epoch)
 
-    seqs, *_ = trainer.train_G_PG(G_a, D_b, optim_G_a, batch.src)
-    print(seqs)
-    # trainer.train(
-    #     0,
-    #     train_iter,
-    #     G_a=G_a,
-    #     G_b=G_b,
-    #     D_a=D_a,
-    #     D_b=D_b,
-    #     optim_G_a=optim_G_a,
-    #     optim_G_b=optim_G_b,
-    #     optim_D_a=optim_D_a,
-    #     optim_D_b=optim_D_b,
-    #     crit_G=crit_G,
-    #     crit_D=crit_D,
-    #     eval_G=eval_G, )
+        train_iter = data.BucketIterator(
+            dataset=train, batch_size=opt.batch_size, device=opt.device,
+            sort_key=lambda x: len(x.src), repeat=False)
+        # batch = next(iter(train_iter))
+        # src_seq = batch.src
+        # tgt_seq = batch.tgt
 
-    # for epoch in range(opt.n_epoch):
-    #     logging.info('[Epoch %d]' % epoch)
-    #
-    #     train_iter, val_iter = data.BucketIterator.splits(
-    #         (train, val), batch_sizes=(opt.batch_size, opt.batch_size), device=opt.device,
-    #         sort_key=lambda x: len(x.src), repeat=False)
-    #
-    #     trainer.train(transformer, train_iter, crit, optimizer, opt)
-    #     # trainer.evaluate(transformer, val_iter, crit, EN)
-    #
-    #     Checkpoint(model=transformer, optimizer=optimizer, epoch=epoch, step=0,
-    #                input_vocab=EN.vocab, output_vocab=EN.vocab).save('./experiment/transformer')
+        trainer.train(
+            0,
+            train_iter,
+            G_a=G_a,
+            G_b=G_b,
+            D_a=D_a,
+            D_b=D_b,
+            optim_G_a=optim_G_a,
+            optim_G_b=optim_G_b,
+            optim_D_a=optim_D_a,
+            optim_D_b=optim_D_b,
+            crit_G=crit_G,
+            crit_D=crit_D,
+            eval_G=eval_G,
+            A_FIELD=EN,
+            B_FIELD=EN)
+
+        # for epoch in range(opt.n_epoch):
+        #     logging.info('[Epoch %d]' % epoch)
+        #
+        #     train_iter, val_iter = data.BucketIterator.splits(
+        #         (train, val), batch_sizes=(opt.batch_size, opt.batch_size), device=opt.device,
+        #         sort_key=lambda x: len(x.src), repeat=False)
+        #
+        #     trainer.train(transformer, train_iter, crit, optimizer, opt)
+        #     # trainer.evaluate(transformer, val_iter, crit, EN)
+        #
+        #     Checkpoint(model=transformer, optimizer=optimizer, epoch=epoch, step=0,
+        #                input_vocab=EN.vocab, output_vocab=EN.vocab).save('./experiment/transformer')
 
 
 if __name__ == '__main__':

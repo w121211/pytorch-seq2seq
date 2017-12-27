@@ -165,6 +165,7 @@ class Transformer(nn.Module):
 
         self.max_len = n_max_seq - 2  # 扣除<bos>, <eos>，這是用在解碼的時候
         self.n_max_seq = n_max_seq
+        self.d_model = d_model
 
         self.encoder = Encoder(
             n_src_vocab, n_max_seq, n_layers=n_layers, n_head=n_head,
@@ -248,6 +249,36 @@ class Transformer(nn.Module):
         # return dec_output
         return seq_logit
 
+    def step_forward(self, src_seq, enc_output, dec_seq, n_rollout=8):
+        '''
+        Args:
+            src_seq: (1, len)
+            enc_output: (1, len, dim_model)
+            dec_seq: (1, cur_len)
+            n_rollout: int
+        Outputs:
+            token: (1, n_rollout) 從decoder產生的下個token機率中，隨機選出n個token。
+            prob: (n_rollout) 對應action(symbol)的prob
+        '''
+        assert src_seq.size(0) == 1, 'rollout時batch_size需設為1'
+        # TODO: bug? 若用stack_seq()的話，明明每個seq輸入皆相同，得到的logit卻不同
+
+        dec_pos = self.get_position(dec_seq.data, is_decode=True)
+
+        # forward a step
+        dec_output, *_ = self.decoder(dec_seq, dec_pos, src_seq, enc_output)
+        dec_output = dec_output[:, -1, :]  # 僅取最後一個token
+        logit = self.tgt_word_proj(dec_output)
+        # probs = F.softmax(logit, dim=1)  # (1, dim_embed)
+        probs = F.softmax(logit)  # (1, dim_embed)
+        # pred = logit.max(1)[1].unsqueeze(1)  # (batch, 1)
+
+        # rollout
+        token = probs.multinomial(n_rollout).data  # (1, n_rollout)
+        prob = probs.squeeze(0)[token.squeeze(0)]  # (n_rollout)
+
+        return token, prob
+
     def translate(self, src_seq):
         ''' Decode by choosing the largest probability '''
         batch_size = src_seq.size(0)
@@ -255,10 +286,13 @@ class Transformer(nn.Module):
         enc_output, *_ = self.encoder(src_seq, src_pos)
 
         # init
-        dec_seq = torch.LongTensor(batch_size, 1).fill_(Constants.BOS)
-        dec_seq = autograd.Variable(dec_seq, volatile=True, requires_grad=False)
+        dec_seq = autograd.Variable(
+            torch.LongTensor(batch_size, 1).fill_(Constants.BOS))
+        softmax_outputs = autograd.Variable(
+            torch.zeros(batch_size, 1))
         if torch.cuda.is_available():
             dec_seq = dec_seq.cuda()
+            softmax_outputs = softmax_outputs.cuda()
 
         # decode
         actives = set([i for i in range(batch_size)])
@@ -269,30 +303,22 @@ class Transformer(nn.Module):
             dec_output = dec_output[:, -1, :]  # 僅取最後一個token
 
             logit = self.tgt_word_proj(dec_output)
-            pred = logit.max(1)[1].unsqueeze(1)  # (batch, 1)
-            dec_seq = torch.cat([dec_seq, pred], dim=1)
+            probs = F.softmax(logit)
+            pred = probs.max(1)
+            # pred = probs.max(1)[1].unsqueeze(1)  # (batch, 1)
+            dec_seq = torch.cat([dec_seq, pred[1].unsqueeze(1)], dim=1)
+            softmax_outputs = torch.cat([softmax_outputs, pred[0].unsqueeze(1)], dim=1)
 
-            _actives = set()
+            temp = set()
             for batch_idx in actives:
-                if pred.data[batch_idx, 0] != Constants.EOS:
-                    _actives.add(batch_idx)
-            actives = _actives
+                if pred[1].data[batch_idx] == Constants.EOS:
+                    temp.add(batch_idx)
+            actives -= temp
 
             if len(actives) == 0:
                 break
 
-        # decode again to gather grad
-        dec_seq = helper.pad_seq(dec_seq.data, self.n_max_seq, Constants.PAD)
-        dec_seq = autograd.Variable(dec_seq)
-        if torch.cuda.is_available():
-            dec_seq = dec_seq.cuda()
-        dec_pos = self.get_position(dec_seq.data)
-
-        dec_output, *_ = self.decoder(dec_seq, dec_pos, src_seq, enc_output)
-        logit = self.tgt_word_proj(dec_output)
-        probs = F.softmax(logit)
-
-        return probs
+        return dec_seq, softmax_outputs
 
     def decode_seq(self, seq_logit):
         return seq_logit.max(2)[1]
@@ -317,11 +343,11 @@ class Transformer(nn.Module):
         dec_output, *_ = self.decoder(dec_seq, dec_pos, src_seq, enc_output)
         dec_output = dec_output[:, -1, :]  # 僅取最後一個token
         logit = self.tgt_word_proj(dec_output)
+        # probs = F.softmax(logit, dim=1)  # (1, dim_embed)
         probs = F.softmax(logit)  # (1, dim_embed)
         # pred = logit.max(1)[1].unsqueeze(1)  # (batch, 1)
 
         # rollout
-
         token = probs.multinomial(n_rollout).data  # (1, n_rollout)
         prob = probs.squeeze(0)[token.squeeze(0)]  # (n_rollout)
 

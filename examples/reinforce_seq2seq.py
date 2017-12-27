@@ -6,6 +6,8 @@ import logging
 import torch
 from torch.optim.lr_scheduler import StepLR
 import torchtext
+from torchtext import data
+from torchtext import datasets
 
 seq2seq_pardir = os.path.realpath(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -21,18 +23,13 @@ from seq2seq.dataset import SourceField, TargetField
 from seq2seq.evaluator import Predictor
 from seq2seq.util.checkpoint import Checkpoint
 
+from ape import Constants
+from ape.dataset.field import SentencePieceField
+
 try:
     raw_input  # Python 2
 except NameError:
     raw_input = input  # Python 3
-
-# Sample usage:
-#     # training
-#     python examples/sample.py --train_path $TRAIN_PATH --dev_path $DEV_PATH --expt_dir $EXPT_PATH
-#     # resuming from the latest checkpoint of the experiment
-#      python examples/sample.py --train_path $TRAIN_PATH --dev_path $DEV_PATH --expt_dir $EXPT_PATH --resume
-#      # resuming from a specific checkpoint
-#      python examples/sample.py --train_path $TRAIN_PATH --dev_path $DEV_PATH --expt_dir $EXPT_PATH --load_checkpoint $CHECKPOINT_DIR
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--train_path', action='store', dest='train_path',
@@ -65,33 +62,44 @@ if opt.load_checkpoint is not None:
     input_vocab = checkpoint.input_vocab
     output_vocab = checkpoint.output_vocab
 else:
-    # Prepare dataset
-    src = SourceField()
-    tgt = TargetField()
-    max_len = 50
-
+    # ---------- prepare dataset ----------
 
     def len_filter(example):
-        return len(example.src) <= max_len and len(example.tgt) <= max_len
+        return len(example.src) <= opt.max_len and len(example.tgt) <= opt.max_len
 
 
-    # train = torchtext.data.TabularDataset(
-    #     path=opt.train_path, format='tsv',
-    #     fields=[('src', src), ('tgt', tgt)],
-    #     filter_pred=len_filter
-    # )
-    # dev = torchtext.data.TabularDataset(
-    #     path=opt.dev_path, format='tsv',
-    #     fields=[('src', src), ('tgt', tgt)],
-    #     filter_pred=len_filter
-    # )
-    train, dev, test = torchtext.datasets.Multi30k.splits(exts=('.de', '.en'),
-                                                          fields=[('src', src), ('tgt', tgt)],
-                                                          train='train', root='./data')
-    src.build_vocab(train, max_size=50000)
-    tgt.build_vocab(train, max_size=50000)
-    input_vocab = src.vocab
-    output_vocab = tgt.vocab
+    EN = SentencePieceField(init_token=Constants.BOS_WORD,
+                            eos_token=Constants.EOS_WORD,
+                            batch_first=True,
+                            include_lengths=True)
+
+    train = datasets.TranslationDataset(
+        path='./data/dualgan/train',
+        exts=('.billion.sp', '.use.sp'), fields=[('src', EN), ('tgt', EN)],
+        filter_pred=len_filter)
+    val = datasets.TranslationDataset(
+        path='./data/dualgan/val',
+        exts=('.billion.sp', '.use.sp'), fields=[('src', EN), ('tgt', EN)],
+        filter_pred=len_filter)
+    train_lang8, val_lang8 = Lang8.splits(
+        exts=('.err.sp', '.cor.sp'), fields=[('src', EN), ('tgt', EN)],
+        train='test', validation='test', test=None, filter_pred=len_filter)
+
+    # 讀取 vocabulary（確保一致）
+    try:
+        logging.info('Load voab from %s' % opt.load_vocab_from)
+        EN.load_vocab(opt.load_vocab_from)
+    except FileNotFoundError:
+        EN.build_vocab_from(opt.build_vocab_from)
+        EN.save_vocab(opt.load_vocab_from)
+
+    logging.info('Vocab len: %d' % len(EN.vocab))
+
+    # 檢查Constants是否有誤
+    assert EN.vocab.stoi[Constants.BOS_WORD] == Constants.BOS
+    assert EN.vocab.stoi[Constants.EOS_WORD] == Constants.EOS
+    assert EN.vocab.stoi[Constants.PAD_WORD] == Constants.PAD
+    assert EN.vocab.stoi[Constants.UNK_WORD] == Constants.UNK
 
     # NOTE: If the source field name and the target field name
     # are different from 'src' and 'tgt' respectively, they have
@@ -100,9 +108,6 @@ else:
     # seq2seq.tgt_field_name = 'tgt'
 
     # Prepare loss
-    weight = torch.ones(len(tgt.vocab))
-    pad = tgt.vocab.stoi[tgt.pad_token]
-    # loss = Perplexity(weight, pad)
     loss = NLLLoss(size_average=False)
     if torch.cuda.is_available():
         loss.cuda()
@@ -125,12 +130,9 @@ else:
         for param in seq2seq.parameters():
             param.data.uniform_(-0.08, 0.08)
 
-            # Optimizer and learning rate scheduler can be customized by
-            # explicitly constructing the objects and pass to the trainer.
-            #
-            # optimizer = Optimizer(torch.optim.Adam(seq2seq.parameters()), max_grad_norm=5)
-            # scheduler = StepLR(optimizer.optimizer, 1)
-            # optimizer.set_scheduler(scheduler)
+        optimizer = Optimizer(torch.optim.Adam(seq2seq.parameters()), max_grad_norm=5)
+        scheduler = StepLR(optimizer.optimizer, 1)
+        optimizer.set_scheduler(scheduler)
 
     # train
     t = SupervisedTrainer(loss=loss, batch_size=32,

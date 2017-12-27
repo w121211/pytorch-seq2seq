@@ -5,8 +5,7 @@ import torch.autograd as autograd
 import torch.nn as nn
 import torch.nn.functional as F
 
-import seq2seq
-from seq2seq.util import helper
+from ape import helper, Constants
 
 
 class ResBlock(nn.Module):
@@ -25,7 +24,7 @@ class ResBlock(nn.Module):
         return x + (0.3 * y)
 
 
-class DiscriminatorCNN(nn.Module):
+class BinaryClassifierCNN(nn.Module):
     '''
     分辨seq為真實或機器產生
 
@@ -38,9 +37,9 @@ class DiscriminatorCNN(nn.Module):
         - **prob** (batch, 1) 輸出[0~1]的值
     '''
 
-    def __init__(self, num_vocab, min_len, embed_dim, num_kernel, kernel_sizes, dropout_p):
-        super(DiscriminatorCNN, self).__init__()
-        self.min_len = min_len
+    def __init__(self, num_vocab, embed_dim, num_kernel, kernel_sizes, dropout_p):
+        super(BinaryClassifierCNN, self).__init__()
+        self.min_len = max(kernel_sizes)  # 沒直接用到，但有些training會需要這個參數
 
         self.embed = nn.Embedding(num_vocab, embed_dim)
         self.convs = nn.ModuleList(
@@ -48,8 +47,17 @@ class DiscriminatorCNN(nn.Module):
         self.dropout = nn.Dropout(dropout_p)
         self.conv2out = nn.Linear(len(kernel_sizes) * num_kernel, 1)
 
-    def forward(self, x):
-        x = self.embed(x)  # (batch, input_size, embed_dim)
+    def forward(self, x, input_onehot=False):
+        # x = self.check_input(x)  # (batch, seq_len)
+        if input_onehot:
+            batch_size = x[0].size(0)
+            bos = self.embed(autograd.Variable(
+                torch.LongTensor([Constants.BOS] * batch_size))).unsqueeze(1)
+            x = [token.mm(self.embed.weight).unsqueeze(1) for token in x]
+            x.insert(0, bos)
+            x = torch.cat(x, dim=1)
+        else:
+            x = self.embed(x)  # (batch, input_size, embed_dim)
         x = x.unsqueeze(1)  # (batch, 1, input_size, embed_dim)
         x = [F.relu(conv(x)).squeeze(3) for conv in self.convs]  # [(batch, C_out, Width), ...]*len(Ks)
         x = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in x]  # [(batch,C_out), ...]*len(Ks)
@@ -60,6 +68,11 @@ class DiscriminatorCNN(nn.Module):
         out = F.sigmoid(logit)  # out介於[0-1]，表示prob
         return out
         # return logit
+
+    def check_input(self, x):
+        if x.size(1) < self.min_len:
+            x = helper.pad_seq(x.data, self.min_len, Constants.PAD)
+        return x
 
 
 class TestDiscriminator(nn.Module):

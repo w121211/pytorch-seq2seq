@@ -4,7 +4,7 @@ import re
 import csv
 from random import shuffle
 
-# import spacy
+import spacy
 
 from torchtext import data
 from torchtext.datasets.translation import TranslationDataset
